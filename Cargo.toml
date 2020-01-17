@@ -62,8 +62,6 @@ members = [
   "secio",
   "multiaddr",
   "bench",
-]
-exclude = [
   "protocols/discovery",
   "protocols/identify",
   "protocols/ping",
