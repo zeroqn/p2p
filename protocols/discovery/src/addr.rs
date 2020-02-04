@@ -3,17 +3,12 @@ use std::net::{IpAddr, SocketAddr};
 use std::time::Instant;
 
 use p2p::{
-    multiaddr::Multiaddr,
-    utils::{is_reachable, multiaddr_to_socketaddr},
+    bytes::{Bytes, BytesMut},
+    multiaddr::{Multiaddr, Protocol},
+    utils::is_reachable,
     SessionId,
 };
 
-// See: bitcoin/netaddress.cpp pchIPv4[12]
-pub(crate) const PCH_IPV4: [u8; 18] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, // ipv4 part
-    0, 0, 0, 0, // port part
-    0, 0,
-];
 pub(crate) const DEFAULT_MAX_KNOWN: usize = 5000;
 
 pub enum Misbehavior {
@@ -61,9 +56,9 @@ pub trait AddressManager {
 // bitcoin: bloom.h, bloom.cpp => CRollingBloomFilter
 pub struct AddrKnown {
     max_known: usize,
-    addrs: HashSet<RawAddr>,
-    addr_times: HashMap<RawAddr, Instant>,
-    time_addrs: BTreeMap<Instant, RawAddr>,
+    addrs: HashSet<ConnectableAddr>,
+    addr_times: HashMap<ConnectableAddr, Instant>,
+    time_addrs: BTreeMap<Instant, ConnectableAddr>,
 }
 
 impl AddrKnown {
@@ -76,10 +71,10 @@ impl AddrKnown {
         }
     }
 
-    pub(crate) fn insert(&mut self, key: RawAddr) {
+    pub(crate) fn insert(&mut self, key: ConnectableAddr) {
         let now = Instant::now();
-        self.addrs.insert(key);
-        self.time_addrs.insert(now, key);
+        self.addrs.insert(key.clone());
+        self.time_addrs.insert(now, key.clone());
         self.addr_times.insert(key, now);
 
         if self.addrs.len() > self.max_known {
@@ -93,11 +88,11 @@ impl AddrKnown {
         }
     }
 
-    pub(crate) fn contains(&self, addr: &RawAddr) -> bool {
+    pub(crate) fn contains(&self, addr: &ConnectableAddr) -> bool {
         self.addrs.contains(addr)
     }
 
-    pub(crate) fn remove<'a>(&mut self, addrs: impl Iterator<Item = &'a RawAddr>) {
+    pub(crate) fn remove<'a>(&mut self, addrs: impl Iterator<Item = &'a ConnectableAddr>) {
         addrs.for_each(|addr| {
             self.addrs.remove(addr);
             if let Some(time) = self.addr_times.remove(addr) {
@@ -113,74 +108,73 @@ impl Default for AddrKnown {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialOrd, Ord, Eq, PartialEq, Hash)]
-pub struct RawAddr(pub(crate) [u8; 18]);
+#[derive(Clone, Debug, PartialOrd, Ord, Eq, PartialEq, Hash)]
+pub struct ConnectableAddr {
+    host: Bytes,
+    port: u16,
+}
 
-impl From<&[u8]> for RawAddr {
-    fn from(source: &[u8]) -> RawAddr {
-        let n = std::cmp::min(source.len(), 18);
-        let mut data = PCH_IPV4;
-        data.copy_from_slice(&source[0..n]);
-        RawAddr(data)
+impl From<&Multiaddr> for ConnectableAddr {
+    fn from(addr: &Multiaddr) -> ConnectableAddr {
+        use p2p::multiaddr::Protocol::*;
+
+        let mut host = None;
+        let mut port = 0u16;
+
+        for proto in addr.iter() {
+            match proto {
+                IP4(_) | IP6(_) | DNS4(_) | DNS6(_) | TLS(_) => {
+                    let mut buf = BytesMut::new();
+                    proto.write_to_bytes(&mut buf);
+                    host = Some(buf.freeze());
+                }
+                TCP(p) => port = p,
+                _ => (),
+            }
+        }
+
+        let host = host.expect("impossible, unsupported host protocol");
+
+        ConnectableAddr { host, port }
     }
 }
 
-impl From<Multiaddr> for RawAddr {
-    fn from(addr: Multiaddr) -> RawAddr {
-        // FIXME: maybe not socket addr
-        RawAddr::from(multiaddr_to_socketaddr(&addr).unwrap())
+impl From<Multiaddr> for ConnectableAddr {
+    fn from(addr: Multiaddr) -> ConnectableAddr {
+        ConnectableAddr::from(&addr)
     }
 }
 
-impl From<SocketAddr> for RawAddr {
-    // CService::GetKey()
-    fn from(addr: SocketAddr) -> RawAddr {
-        let mut data = PCH_IPV4;
-        match addr.ip() {
-            IpAddr::V4(ipv4) => {
-                data[12..16].copy_from_slice(&ipv4.octets());
-            }
-            IpAddr::V6(ipv6) => {
-                data[0..16].copy_from_slice(&ipv6.octets());
-            }
+impl From<SocketAddr> for ConnectableAddr {
+    fn from(addr: SocketAddr) -> ConnectableAddr {
+        let proto = match addr.ip() {
+            IpAddr::V4(ipv4) => Protocol::IP4(ipv4),
+            IpAddr::V6(ipv6) => Protocol::IP6(ipv6),
+        };
+
+        let mut buf = BytesMut::new();
+        proto.write_to_bytes(&mut buf);
+
+        ConnectableAddr {
+            host: buf.freeze(),
+            port: addr.port(),
         }
-        let port = addr.port();
-        data[16] = (port / 0x100) as u8;
-        data[17] = (port & 0x0FF) as u8;
-        RawAddr(data)
     }
 }
 
-impl RawAddr {
-    pub fn socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(self.ip(), self.port())
-    }
-
-    pub fn ip(&self) -> IpAddr {
-        let mut is_ipv4 = true;
-        for (i, value) in PCH_IPV4.iter().enumerate().take(12) {
-            if self.0[i] != *value {
-                is_ipv4 = false;
-                break;
-            }
-        }
-        if is_ipv4 {
-            let mut buf = [0u8; 4];
-            buf.copy_from_slice(&self.0[12..16]);
-            From::from(buf)
-        } else {
-            let mut buf = [0u8; 16];
-            buf.copy_from_slice(&self.0[0..16]);
-            From::from(buf)
-        }
-    }
-
+impl ConnectableAddr {
     pub fn port(&self) -> u16 {
-        0x100 * u16::from(self.0[16]) + u16::from(self.0[17])
+        self.port
     }
 
-    // Copy from std::net::IpAddr::is_global
     pub fn is_reachable(&self) -> bool {
-        is_reachable(self.socket_addr().ip())
+        let (proto, _) =
+            Protocol::from_bytes(&self.host).expect("impossible invalid host protocol");
+
+        match proto {
+            Protocol::IP4(ipv4) => is_reachable(IpAddr::V4(ipv4)),
+            Protocol::IP6(ipv6) => is_reachable(IpAddr::V6(ipv6)),
+            _ => true,
+        }
     }
 }

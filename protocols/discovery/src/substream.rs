@@ -14,13 +14,12 @@ use p2p::{
     context::ProtocolContextMutRef,
     error::Error,
     service::{ServiceControl, SessionType},
-    utils::multiaddr_to_socketaddr,
     ProtocolId, SessionId,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
-use crate::addr::{AddrKnown, AddressManager, Misbehavior, RawAddr};
+use crate::addr::{AddrKnown, AddressManager, ConnectableAddr, Misbehavior};
 use crate::protocol::{DiscoveryCodec, DiscoveryMessage, Node, Nodes};
 
 // FIXME: should be a more high level version number
@@ -140,9 +139,7 @@ impl SubstreamValue {
                 count: MAX_ADDR_TO_SEND as u32,
                 listen_port: substream.listen_port,
             });
-            addr_known.insert(RawAddr::from(
-                multiaddr_to_socketaddr(&substream.remote_addr).unwrap(),
-            ));
+            addr_known.insert(ConnectableAddr::from(&substream.remote_addr.clone()));
 
             RemoteAddress::Listen(substream.remote_addr)
         } else {
@@ -166,8 +163,8 @@ impl SubstreamValue {
         }
     }
 
-    fn remote_raw_addr(&self) -> Option<RawAddr> {
-        multiaddr_to_socketaddr(self.remote_addr.to_inner()).map(RawAddr::from)
+    fn remote_connectable_addr(&self) -> ConnectableAddr {
+        ConnectableAddr::from(self.remote_addr.to_inner())
     }
 
     pub(crate) fn check_timer(&mut self) {
@@ -228,9 +225,8 @@ impl SubstreamValue {
                     debug!("listen port: {:?}", listen_port);
                     if let Some(port) = listen_port {
                         self.remote_addr.update_port(port);
-                        if let Some(raw_addr) = self.remote_raw_addr() {
-                            self.addr_known.insert(raw_addr);
-                        }
+                        self.addr_known.insert(self.remote_connectable_addr());
+
                         // add client listen address to manager
                         if let RemoteAddress::Listen(ref addr) = self.remote_addr {
                             addr_mgr.add_new_addr(self.session_id, addr.clone());
@@ -347,7 +343,7 @@ impl SubstreamValue {
                         for node in &nodes.items {
                             for addr in &node.addresses {
                                 trace!("received address: {}", addr);
-                                self.addr_known.insert(RawAddr::from(addr.clone()));
+                                self.addr_known.insert(ConnectableAddr::from(addr));
                             }
                         }
                         nodes_list.push(nodes);
@@ -387,7 +383,7 @@ impl Substream {
             context
                 .listens()
                 .iter()
-                .map(|address| multiaddr_to_socketaddr(address).unwrap().port())
+                .map(|address| ConnectableAddr::from(address).port())
                 .next()
         } else {
             None
