@@ -45,7 +45,7 @@ mod protocol_generated_verifier;
 mod protocol_mol;
 
 pub use crate::{
-    addr::{AddrKnown, AddressManager, MisbehaveResult, Misbehavior, RawAddr},
+    addr::{AddrKnown, AddressManager, ConnectableAddr, MisbehaveResult, Misbehavior},
     protocol::{DiscoveryMessage, Node, Nodes},
     substream::{Substream, SubstreamKey, SubstreamValue},
 };
@@ -86,7 +86,7 @@ impl<M: AddressManager + Unpin + Send + 'static> ServiceProtocol for DiscoveryPr
                         }
                     }
                 }
-                    .boxed()
+                .boxed()
             })
             .unwrap();
         if context.future_task(discovery_task).is_err() {
@@ -306,7 +306,7 @@ impl<M: AddressManager + Unpin> Discovery<M> {
         let mut dead_addr = Vec::default();
         for key in self.dead_keys.drain() {
             if let Some(addr) = self.substreams.remove(&key) {
-                dead_addr.push(RawAddr::from(addr.remote_addr.into_inner()));
+                dead_addr.push(ConnectableAddr::from(addr.remote_addr.into_inner()));
             }
         }
 
@@ -366,7 +366,7 @@ impl<M: AddressManager + Unpin> Stream for Discovery<M> {
         let mut remain_keys = self.substreams.keys().cloned().collect::<Vec<_>>();
         debug!("announce_multiaddrs: {:?}", announce_multiaddrs);
         for announce_multiaddr in announce_multiaddrs.into_iter() {
-            let announce_addr = RawAddr::from(announce_multiaddr.clone());
+            let announce_addr = ConnectableAddr::from(announce_multiaddr.clone());
             remain_keys.shuffle(&mut rng);
             for i in 0..2 {
                 if let Some(key) = remain_keys.get(i) {
@@ -381,7 +381,7 @@ impl<M: AddressManager + Unpin> Stream for Discovery<M> {
                             && !value.addr_known.contains(&announce_addr)
                         {
                             value.announce_multiaddrs.push(announce_multiaddr.clone());
-                            value.addr_known.insert(announce_addr);
+                            value.addr_known.insert(announce_addr.clone());
                         }
                     }
                 }
