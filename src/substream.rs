@@ -9,6 +9,7 @@ use std::{
         Arc,
     },
     task::{Context, Poll},
+    time::SystemTime,
 };
 use tokio::prelude::AsyncWrite;
 use tokio_util::codec::{length_delimited::LengthDelimitedCodec, Framed};
@@ -414,6 +415,10 @@ where
                         self.proto_id,
                         data.len()
                     );
+
+                    if self.proto_id > ProtocolId::new(3) && data.len() > 500 {
+                        log::warn!("recv data bigger than 500, {}", data.len());
+                    }
 
                     let data = match self.before_receive {
                         Some(ref function) => match function(data) {
