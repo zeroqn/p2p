@@ -12,8 +12,9 @@ use log::{debug, trace, warn};
 use p2p::multiaddr::{Multiaddr, Protocol};
 use p2p::{
     context::ProtocolContextMutRef,
-    error::Error,
+    error::SendErrorKind,
     service::{ServiceControl, SessionType},
+    utils::multiaddr_to_socketaddr,
     ProtocolId, SessionId,
 };
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -83,16 +84,9 @@ impl AsyncWrite for StreamHandle {
         self.sender
             .send_message_to(self.session_id, self.proto_id, BytesMut::from(buf).freeze())
             .map(|()| buf.len())
-            .map_err(|e| {
-                if let Error::IoError(e) = e {
-                    if e.kind() == io::ErrorKind::WouldBlock {
-                        e
-                    } else {
-                        io::ErrorKind::BrokenPipe.into()
-                    }
-                } else {
-                    io::ErrorKind::BrokenPipe.into()
-                }
+            .map_err(|e| match e {
+                SendErrorKind::WouldBlock => io::ErrorKind::WouldBlock.into(),
+                SendErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe.into(),
             })
             .into()
     }
