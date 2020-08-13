@@ -56,6 +56,10 @@ mod channel;
 
 pub(crate) mod upnp;
 
+/// Prometheus metrics
+#[cfg(feature = "metrics")]
+pub(crate) mod metrics;
+
 use std::{fmt, ops::AddAssign};
 
 /// Index of sub/protocol stream

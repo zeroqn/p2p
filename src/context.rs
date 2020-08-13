@@ -99,12 +99,18 @@ impl SessionContext {
 
     // Increase when data pushed to Service's write buffer
     pub(crate) fn incr_pending_data_size(&self, data_size: usize) {
+        #[cfg(feature = "metrics")]
+        crate::metrics::TENTACLE_MESSAGE_IN_TX_QUEUE.inc();
+
         self.pending_data_size
             .fetch_add(data_size, Ordering::Relaxed);
     }
 
     // Decrease when data sent to underlying Yamux Stream
     pub(crate) fn decr_pending_data_size(&self, data_size: usize) {
+        #[cfg(feature = "metrics")]
+        crate::metrics::TENTACLE_MESSAGE_IN_TX_QUEUE.dec();
+
         self.pending_data_size
             .fetch_sub(data_size, Ordering::Relaxed);
     }
