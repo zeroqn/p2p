@@ -190,6 +190,9 @@ where
                         && !self.shutdown.load(Ordering::SeqCst)
                     {
                         block_in_place(self.flag.received(), || {
+                            #[cfg(feature = "metrics")]
+                            crate::metrics::TENTACLE_MESSAGE_IN_RX_QUEUE.dec();
+
                             self.handle
                                 .received(self.handle_context.as_mut(&session), data)
                         });
@@ -452,6 +455,9 @@ where
                 self.close();
             }
             Received { data } => block_in_place(self.flag.received(), || {
+                #[cfg(feature = "metrics")]
+                crate::metrics::TENTACLE_MESSAGE_IN_RX_QUEUE.dec();
+
                 self.handle
                     .received(self.handle_context.as_mut(&self.context), data)
             }),

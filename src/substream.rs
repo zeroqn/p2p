@@ -390,6 +390,9 @@ where
                 self.distribute_to_user_level(cx);
 
                 if self.event {
+                    #[cfg(feature = "metrics")]
+                    crate::metrics::TENTACLE_MESSAGE_IN_RX_QUEUE.inc();
+
                     self.output_event(
                         cx,
                         ProtocolEvent::Message {
